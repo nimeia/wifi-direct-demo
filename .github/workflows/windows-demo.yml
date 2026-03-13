@@ -33,7 +33,9 @@ jobs:
         run: |
           $uapRoot = Join-Path ${env:ProgramFiles(x86)} "Reference Assemblies\Microsoft\Framework\UAP"
           if (-not (Test-Path $uapRoot)) {
-            throw "UAP reference assemblies path not found: $uapRoot"
+            Write-Host "::warning::UAP reference assemblies path not found: $uapRoot"
+            "available=false" >> $env:GITHUB_OUTPUT
+            exit 0
           }
 
           $versions = Get-ChildItem $uapRoot -Directory |
@@ -41,23 +43,29 @@ jobs:
             Sort-Object { [version]($_.Name.TrimStart('v')) } -Descending
 
           if (-not $versions -or $versions.Count -eq 0) {
-            throw "No UAP reference assemblies found under $uapRoot"
+            Write-Host "::warning::No UAP reference assemblies found under $uapRoot"
+            "available=false" >> $env:GITHUB_OUTPUT
+            exit 0
           }
 
           $selected = $versions[0].Name.TrimStart('v')
           $parts = $selected.Split('.')
           if ($parts.Count -lt 3) {
-            throw "Unexpected UAP SDK version format: $selected"
+            Write-Host "::warning::Unexpected UAP SDK version format: $selected"
+            "available=false" >> $env:GITHUB_OUTPUT
+            exit 0
           }
 
           $build = $parts[2]
           $tpv = if ($parts.Count -ge 4) { $selected } else { "$selected.0" }
           $tfm = "uap10.0.$build"
 
+          "available=true" >> $env:GITHUB_OUTPUT
           "target_framework=$tfm" >> $env:GITHUB_OUTPUT
           "target_platform_version=$tpv" >> $env:GITHUB_OUTPUT
 
       - name: Build Windows UWP demo
+        if: steps.detect_uap_sdk.outputs.available == 'true'
         shell: pwsh
         run: |
           msbuild windows/WiFiDirectDemo.Windows/WiFiDirectDemo.Windows.csproj `
@@ -70,7 +78,12 @@ jobs:
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=None
 
+      - name: Skip Windows UWP demo build
+        if: steps.detect_uap_sdk.outputs.available != 'true'
+        run: echo "Skipping UWP build because required UAP reference assemblies are not present on this runner image."
+
       - name: Upload Windows build outputs
+        if: steps.detect_uap_sdk.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: windows-demo-build

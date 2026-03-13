@@ -3,6 +3,7 @@ package com.example.wifidirectdemo
 import android.Manifest
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.MacAddress
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
@@ -132,8 +133,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connectToPeer(device: WifiP2pDevice) {
+        val macAddress = try {
+            MacAddress.fromString(device.deviceAddress)
+        } catch (_: IllegalArgumentException) {
+            appendLog("Invalid device address: ${device.deviceAddress}")
+            return
+        }
+
         val config = WifiP2pConfig.Builder()
-            .setDeviceAddress(device.deviceAddress)
+            .setDeviceAddress(macAddress)
             .build()
 
         manager.connect(channel, config, object : WifiP2pManager.ActionListener {
