@@ -149,16 +149,18 @@ try {
 
     Write-Section "UAP Detection"
     $uapRoot = Join-Path ${env:ProgramFiles(x86)} "Reference Assemblies\Microsoft\Framework\UAP"
+    $windowsSdkReferencesRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\References"
     $uapAvailable = $false
     $targetFramework = $null
     $targetPlatformVersion = $null
+    $uapDetectionSource = $null
 
     if (Test-Path $uapRoot) {
-        $versions = Get-ChildItem $uapRoot -Directory |
+        $versions = @(Get-ChildItem $uapRoot -Directory |
             Where-Object { $_.Name -match '^v10\.0\.\d+(\.\d+)?$' } |
-            Sort-Object { [version]($_.Name.TrimStart('v')) } -Descending
+            Sort-Object { [version]($_.Name.TrimStart('v')) } -Descending)
 
-        if ($versions -and $versions.Count -gt 0) {
+        if ($versions.Count -gt 0) {
             $selected = $versions[0].Name.TrimStart('v')
             $parts = $selected.Split('.')
             if ($parts.Count -ge 3) {
@@ -166,15 +168,34 @@ try {
                 $targetFramework = "uap10.0.$build"
                 $targetPlatformVersion = if ($parts.Count -ge 4) { $selected } else { "$selected.0" }
                 $uapAvailable = $true
+                $uapDetectionSource = $uapRoot
+            }
+        }
+    }
+
+    if (-not $uapAvailable -and (Test-Path $windowsSdkReferencesRoot)) {
+        $sdkVersions = @(Get-ChildItem $windowsSdkReferencesRoot -Directory |
+            Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]$_.Name } -Descending)
+
+        if ($sdkVersions.Count -gt 0) {
+            $selected = $sdkVersions[0].Name
+            $parts = $selected.Split('.')
+            if ($parts.Count -ge 3) {
+                $build = $parts[2]
+                $targetFramework = "uap10.0.$build"
+                $targetPlatformVersion = $selected
+                $uapAvailable = $true
+                $uapDetectionSource = $windowsSdkReferencesRoot
             }
         }
     }
 
     if ($uapAvailable) {
-        Write-Host "Detected UAP SDK: $targetFramework ($targetPlatformVersion)"
+        Write-Host "Detected UAP SDK: $targetFramework ($targetPlatformVersion) from $uapDetectionSource"
     }
     else {
-        Write-Host "UAP SDK not available on this machine."
+        Write-Host "UAP SDK not available on this machine. Checked: $uapRoot and $windowsSdkReferencesRoot"
     }
 
     $uwpBuilt = $false
@@ -187,10 +208,10 @@ try {
     }
     elseif (-not $uapAvailable -and -not $ForceUwpBuild) {
         if ($enableSideloadPackage) {
-            throw "UAP reference assemblies are not available. Cannot produce a runnable UWP package. Install Visual Studio 2022 Build Tools with UWP workload, or run with -SkipUwpBuild for protocol-only artifacts."
+            throw "UWP SDK references are not available. Checked '$uapRoot' and '$windowsSdkReferencesRoot'. Install Visual Studio 2022 Build Tools with UWP workload, or run with -SkipUwpBuild for protocol-only artifacts."
         }
 
-        $skipReason = "UAP reference assemblies are not available."
+        $skipReason = "UWP SDK references are not available."
         Write-Host "Skipping UWP build: $skipReason"
     }
     else {

@@ -57,11 +57,42 @@ jobs:
           }
 
           $uapRoot = Join-Path ${env:ProgramFiles(x86)} "Reference Assemblies\Microsoft\Framework\UAP"
-          if (-not (Test-Path $uapRoot)) {
-            throw "UAP reference assemblies path still not found after install: $uapRoot"
+          $sdkRefsRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\References"
+          $detected = $false
+
+          for ($attempt = 1; $attempt -le 18; $attempt++) {
+            if (Test-Path $uapRoot) {
+              $uapVersions = @(Get-ChildItem $uapRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^v10\.0\.\d+(\.\d+)?$' } |
+                Select-Object -ExpandProperty Name)
+              if ($uapVersions.Count -gt 0) {
+                Write-Host "Detected UAP reference assemblies:"
+                $uapVersions
+                $detected = $true
+                break
+              }
+            }
+
+            if (Test-Path $sdkRefsRoot) {
+              $sdkVersions = @(Get-ChildItem $sdkRefsRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+                Select-Object -ExpandProperty Name)
+              if ($sdkVersions.Count -gt 0) {
+                Write-Host "Detected Windows SDK references (fallback path):"
+                $sdkVersions
+                $detected = $true
+                break
+              }
+            }
+
+            if ($attempt -lt 18) {
+              Start-Sleep -Seconds 10
+            }
           }
 
-          Get-ChildItem $uapRoot -Directory | Select-Object -ExpandProperty Name
+          if (-not $detected) {
+            throw "UWP SDK references not found after install. Checked: $uapRoot and $sdkRefsRoot"
+          }
 
       - name: Build Windows installer package
         shell: pwsh
