@@ -82,10 +82,33 @@ jobs:
         if: steps.detect_uap_sdk.outputs.available != 'true'
         run: echo "Skipping UWP build because required UAP reference assemblies are not present on this runner image."
 
+      - name: Prepare Windows artifact payload
+        shell: pwsh
+        run: |
+          $outDir = "dist/windows-demo-build"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          if ("${{ steps.detect_uap_sdk.outputs.available }}" -eq "true") {
+            Copy-Item "windows/WiFiDirectDemo.Windows/bin/x64/Release/*" -Destination $outDir -Recurse -Force
+            "status=uwp-built" | Out-File "$outDir/build-status.txt" -Encoding utf8
+          } else {
+            "status=uwp-skipped" | Out-File "$outDir/build-status.txt" -Encoding utf8
+            "reason=required UAP reference assemblies were not present on this runner image" | Out-File "$outDir/build-status.txt" -Encoding utf8 -Append
+
+            if (Test-Path "windows/WiFiDirectDemo.Protocol/bin/Release") {
+              New-Item -ItemType Directory -Force -Path "$outDir/protocol" | Out-Null
+              Copy-Item "windows/WiFiDirectDemo.Protocol/bin/Release/*" -Destination "$outDir/protocol" -Recurse -Force
+            }
+
+            if (Test-Path "windows/WiFiDirectDemo.Protocol.Tests/bin/Release") {
+              New-Item -ItemType Directory -Force -Path "$outDir/protocol-tests" | Out-Null
+              Copy-Item "windows/WiFiDirectDemo.Protocol.Tests/bin/Release/*" -Destination "$outDir/protocol-tests" -Recurse -Force
+            }
+          }
+
       - name: Upload Windows build outputs
-        if: steps.detect_uap_sdk.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: windows-demo-build
           path: |
-            windows/WiFiDirectDemo.Windows/bin/x64/Release/**
+            dist/windows-demo-build/**
