@@ -183,19 +183,16 @@ try {
 
         if ($sdkVersions.Count -gt 0) {
             $selected = $sdkVersions[0].Name
-            $uapAvailable = $true
             $detectedSdkVersion = $selected
             $uapDetectionSource = $windowsSdkReferencesRoot
         }
     }
 
     if ($uapAvailable) {
-        if ($overrideTargetsFromDetection) {
-            Write-Host "Detected UAP SDK: $targetFramework ($targetPlatformVersion) from $uapDetectionSource"
-        }
-        else {
-            Write-Host "Detected Windows SDK references at $uapDetectionSource (latest $detectedSdkVersion). Using project-defined UWP target values."
-        }
+        Write-Host "Detected UAP SDK: $targetFramework ($targetPlatformVersion) from $uapDetectionSource"
+    }
+    elseif ($detectedSdkVersion) {
+        Write-Host "Detected Windows SDK references at $uapDetectionSource (latest $detectedSdkVersion), but UAP reference assemblies were not found."
     }
     else {
         Write-Host "UAP SDK not available on this machine. Checked: $uapRoot and $windowsSdkReferencesRoot"
@@ -211,10 +208,10 @@ try {
     }
     elseif (-not $uapAvailable -and -not $ForceUwpBuild) {
         if ($enableSideloadPackage) {
-            throw "UWP SDK references are not available. Checked '$uapRoot' and '$windowsSdkReferencesRoot'. Install Visual Studio 2022 Build Tools with UWP workload, or run with -SkipUwpBuild for protocol-only artifacts."
+            throw "UAP reference assemblies are not available. Checked '$uapRoot' and '$windowsSdkReferencesRoot'. Install Visual Studio 2022 Build Tools with UWP workload + Windows 10 SDK 19041, or run with -SkipUwpBuild for protocol-only artifacts."
         }
 
-        $skipReason = "UWP SDK references are not available."
+        $skipReason = "UAP reference assemblies are not available."
         Write-Host "Skipping UWP build: $skipReason"
     }
     else {
