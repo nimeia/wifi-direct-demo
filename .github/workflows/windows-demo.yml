@@ -1,0 +1,45 @@
+name: windows-demo
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore protocol test dependencies
+        run: dotnet restore windows/WiFiDirectDemo.Protocol.Tests/WiFiDirectDemo.Protocol.Tests.csproj
+
+      - name: Run protocol tests
+        run: dotnet test windows/WiFiDirectDemo.Protocol.Tests/WiFiDirectDemo.Protocol.Tests.csproj --configuration Release --no-restore
+
+      - name: Build Windows UWP demo
+        shell: pwsh
+        run: |
+          msbuild windows/WiFiDirectDemo.Windows/WiFiDirectDemo.Windows.csproj `
+            /restore `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxBundle=Never `
+            /p:UapAppxPackageBuildMode=None
+
+      - name: Upload Windows build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-demo-build
+          path: |
+            windows/WiFiDirectDemo.Windows/bin/x64/Release/**

@@ -1,0 +1,64 @@
+<Page
+    x:Class="WiFiDirectDemo.Windows.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WiFiDirectDemo.Windows"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="16" RowSpacing="12" ColumnSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="2*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Wi‑Fi Direct Demo (Windows Host / Client)" FontSize="24" FontWeight="SemiBold" />
+
+        <Grid Grid.Row="1" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="3*" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Spacing="8">
+                <Button Content="Start Host" Click="StartHost_Click" />
+                <Button Content="Discover" Click="Discover_Click" />
+                <Button Content="Connect Selected" Click="ConnectSelected_Click" />
+                <ListView x:Name="PeersListView"
+                          Height="320"
+                          ItemsSource="{x:Bind Peers}">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="local:PeerInfoViewModel">
+                            <StackPanel Padding="4">
+                                <TextBlock Text="{x:Bind DisplayName}" />
+                                <TextBlock Text="{x:Bind DeviceId}" Opacity="0.6" TextWrapping="WrapWholeWords" FontSize="12" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Spacing="8">
+                <TextBlock Text="Log" FontWeight="SemiBold" />
+                <ListView x:Name="LogListView" Height="360" ItemsSource="{x:Bind Logs}" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="2" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="MessageTextBox" PlaceholderText="Type a message..." />
+            <Button Grid.Column="1" Content="Send" Click="Send_Click" />
+        </Grid>
+
+        <TextBlock Grid.Row="3"
+                   Text="Tip: For Windows ↔ Android, keep the Windows side in Host mode. The Android app discovers peers, connects, and then opens a TCP client to the group owner."
+                   TextWrapping="WrapWholeWords"
+                   Opacity="0.8" />
+    </Grid>
+</Page>
