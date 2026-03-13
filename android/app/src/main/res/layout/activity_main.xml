@@ -49,6 +49,61 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Port Access Test"
+        android:textStyle="bold" />
+
+    <EditText
+        android:id="@+id/portTestHostEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="Windows Wi-Fi Direct IP (e.g. 192.168.49.1)"
+        android:inputType="text" />
+
+    <EditText
+        android:id="@+id/portTestPortEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="Ingress port (e.g. 51080)"
+        android:inputType="number"
+        android:text="51080" />
+
+    <EditText
+        android:id="@+id/portTestPathEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="HTTP path (e.g. /)"
+        android:inputType="text"
+        android:text="/" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/httpTestButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="HTTP Test" />
+
+        <Button
+            android:id="@+id/tcpTestButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="TCP Test" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
         android:text="Log"
         android:textStyle="bold" />

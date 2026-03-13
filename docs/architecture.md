@@ -64,11 +64,21 @@ Host(Windows)                         Client(Android)
 - `text`
 - `timestampUtc`
 
-## 5. 关键模块
+## 5. 端口开放扩展（Windows Port Access）
+
+在 Windows Demo 中，除 `50001` 控制通道外，还可配置一个入口端口（Ingress Port）做转发：
+
+- 入口：`Wi-Fi Direct IP:IngressPort`
+- 转发目标：`TargetHost:TargetPort`（当前限制本机 localhost）
+- 安全限制：`TargetPort` 必须命中可配置白名单
+
+Android 端提供独立测试面板，可对 `Host:Port` 发起 HTTP GET 或 TCP connect 探测。
+
+## 6. 关键模块
 
 ### Windows
 - `MainPage.xaml(.cs)`
-  - 广播、发现、连接、日志、发送消息
+  - 广播、发现、连接、日志、发送消息、端口转发与白名单校验
 - `WiFiDirectSession`
   - 当前示例内联在 `MainPage` 中，后续建议单独抽出
 - `WiFiDirectDemo.Protocol`
@@ -76,13 +86,13 @@ Host(Windows)                         Client(Android)
 
 ### Android
 - `MainActivity`
-  - 权限、UI、发现、连接
+  - 权限、UI、发现、连接、端口可达性测试（HTTP/TCP）
 - `WiFiDirectBroadcastReceiver`
   - Wi‑Fi P2P 广播接收
 - `SocketSession`
   - TCP 收发
 
-## 6. 为什么不把发现和聊天分离成更多模块
+## 7. 为什么不把发现和聊天分离成更多模块
 
 这是 Demo，不是正式产品。当前重点是：
 

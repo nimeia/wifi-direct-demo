@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -18,6 +20,7 @@ namespace WiFiDirectDemo.Windows;
 public sealed partial class MainPage : Page
 {
     private const string DemoPort = "50001";
+    private const int MaxLogItems = 250;
 
     private DeviceWatcher? _deviceWatcher;
     private WiFiDirectAdvertisementPublisher? _publisher;
@@ -28,14 +31,23 @@ public sealed partial class MainPage : Page
     private DataWriter? _writer;
     private DataReader? _reader;
 
-    public ObservableCollection<PeerInfoViewModel> Peers { get; } = new ObservableCollection<PeerInfoViewModel>();
+    private StreamSocketListener? _portAccessListener;
+    private PortAccessConfig? _portAccessConfig;
 
-    public ObservableCollection<string> Logs { get; } = new ObservableCollection<string>();
+    public ObservableCollection<PeerInfoViewModel> Peers { get; } = new();
+
+    public ObservableCollection<string> Logs { get; } = new();
 
     public MainPage()
     {
         InitializeComponent();
         AppendLog("Ready.");
+    }
+
+    private void Page_Unloaded(object sender, RoutedEventArgs e)
+    {
+        StopPortAccessCore();
+        CleanupConnection();
     }
 
     private void StartHost_Click(object sender, RoutedEventArgs e)
@@ -57,7 +69,7 @@ public sealed partial class MainPage : Page
             }
 
             _publisher.Start();
-            AppendLog("Host mode started. Advertising Wi‑Fi Direct presence.");
+            AppendLog("Host mode started. Advertising Wi-Fi Direct presence.");
         }
         catch (Exception ex)
         {
@@ -80,21 +92,17 @@ public sealed partial class MainPage : Page
             using var request = args.GetConnectionRequest();
             AppendLog($"Incoming connection request from: {request.DeviceInformation.Name}");
 
-            _connectedDevice?.Dispose();
-            _connectedDevice = await WiFiDirectDevice.FromIdAsync(request.DeviceInformation.Id);
-
+            ReplaceConnectedDevice(await WiFiDirectDevice.FromIdAsync(request.DeviceInformation.Id));
             if (_connectedDevice is null)
             {
-                AppendLog("Failed to accept Wi‑Fi Direct connection.");
+                AppendLog("Failed to accept Wi-Fi Direct connection.");
                 return;
             }
-
-            _connectedDevice.ConnectionStatusChanged += ConnectedDevice_ConnectionStatusChanged;
 
             var pairs = _connectedDevice.GetConnectionEndpointPairs();
             var local = pairs.Count > 0 ? pairs[0].LocalHostName?.DisplayName : "n/a";
             var remote = pairs.Count > 0 ? pairs[0].RemoteHostName?.DisplayName : "n/a";
-            AppendLog($"Wi‑Fi Direct connected. Local={local}, Remote={remote}");
+            AppendLog($"Wi-Fi Direct connected. Local={local}, Remote={remote}");
 
             await StartServerAsync();
         }
@@ -117,8 +125,15 @@ public sealed partial class MainPage : Page
         try
         {
             Peers.Clear();
-            _deviceWatcher?.Stop();
-            _deviceWatcher = DeviceInformation.CreateWatcher(WiFiDirectDevice.GetDeviceSelector(WiFiDirectDeviceSelectorType.AssociationEndpoint));
+
+            if (_deviceWatcher is not null)
+            {
+                UnsubscribeDeviceWatcher(_deviceWatcher);
+                _deviceWatcher.Stop();
+            }
+
+            _deviceWatcher = DeviceInformation.CreateWatcher(
+                WiFiDirectDevice.GetDeviceSelector(WiFiDirectDeviceSelectorType.AssociationEndpoint));
             _deviceWatcher.Added += DeviceWatcher_Added;
             _deviceWatcher.Updated += DeviceWatcher_Updated;
             _deviceWatcher.Removed += DeviceWatcher_Removed;
@@ -140,8 +155,9 @@ public sealed partial class MainPage : Page
             Peers.Add(new PeerInfoViewModel
             {
                 DisplayName = string.IsNullOrWhiteSpace(args.Name) ? "(unnamed)" : args.Name,
-                DeviceId = args.Id,
+                DeviceId = args.Id
             });
+
             AppendLog("Discovered peer: " + (string.IsNullOrWhiteSpace(args.Name) ? args.Id : args.Name));
         });
     }
@@ -186,17 +202,14 @@ public sealed partial class MainPage : Page
                 return;
             }
 
-            _connectedDevice?.Dispose();
-            _connectedDevice = await WiFiDirectDevice.FromIdAsync(peer.DeviceId);
-
+            ReplaceConnectedDevice(await WiFiDirectDevice.FromIdAsync(peer.DeviceId));
             if (_connectedDevice is null)
             {
                 AppendLog("Connection failed.");
                 return;
             }
 
-            _connectedDevice.ConnectionStatusChanged += ConnectedDevice_ConnectionStatusChanged;
-            AppendLog("Wi‑Fi Direct connected to " + peer.DisplayName);
+            AppendLog("Wi-Fi Direct connected to " + peer.DisplayName);
 
             var pairs = _connectedDevice.GetConnectionEndpointPairs();
             if (pairs.Count == 0)
@@ -223,7 +236,7 @@ public sealed partial class MainPage : Page
             _serverListener = new StreamSocketListener();
             _serverListener.ConnectionReceived += ServerListener_ConnectionReceived;
             await _serverListener.BindServiceNameAsync(DemoPort);
-            AppendLog("TCP server listening on port " + DemoPort);
+            AppendLog("TCP demo server listening on port " + DemoPort);
         }
         catch (Exception ex)
         {
@@ -235,15 +248,9 @@ public sealed partial class MainPage : Page
     {
         try
         {
-            _clientSocket?.Dispose();
-            _clientSocket = args.Socket;
-            _writer = new DataWriter(_clientSocket.OutputStream);
-            _reader = new DataReader(_clientSocket.InputStream)
-            {
-                InputStreamOptions = InputStreamOptions.Partial
-            };
+            ReplaceClientSocket(args.Socket);
 
-            AppendLog("TCP client connected.");
+            AppendLog("TCP demo client connected.");
             await SendProtocolMessageAsync(ProtocolMessage.Hello("Windows-Host", "host-ready"));
             _ = Task.Run(ReceiveLoopAsync);
         }
@@ -257,16 +264,11 @@ public sealed partial class MainPage : Page
     {
         try
         {
-            _clientSocket?.Dispose();
-            _clientSocket = new StreamSocket();
-            await _clientSocket.ConnectAsync(hostName, DemoPort);
-            _writer = new DataWriter(_clientSocket.OutputStream);
-            _reader = new DataReader(_clientSocket.InputStream)
-            {
-                InputStreamOptions = InputStreamOptions.Partial
-            };
+            var socket = new StreamSocket();
+            await socket.ConnectAsync(hostName, DemoPort);
+            ReplaceClientSocket(socket);
 
-            AppendLog("TCP client connected to remote host.");
+            AppendLog("TCP demo client connected to remote host.");
             await SendProtocolMessageAsync(ProtocolMessage.Hello("Windows-Client", "client-ready"));
             _ = Task.Run(ReceiveLoopAsync);
         }
@@ -292,7 +294,7 @@ public sealed partial class MainPage : Page
                 var loaded = await _reader.LoadAsync(512);
                 if (loaded == 0)
                 {
-                    await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => AppendLog("Socket closed."));
+                    await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => AppendLog("TCP demo socket closed."));
                     break;
                 }
 
@@ -301,8 +303,7 @@ public sealed partial class MainPage : Page
                 while (true)
                 {
                     var buffer = builder.ToString();
-                    var newlineIndex = buffer.IndexOf('
-');
+                    var newlineIndex = buffer.IndexOf('\n');
                     if (newlineIndex < 0)
                     {
                         break;
@@ -345,7 +346,7 @@ public sealed partial class MainPage : Page
     {
         if (_writer is null)
         {
-            AppendLog("No active TCP channel.");
+            AppendLog("No active TCP demo channel.");
             return;
         }
 
@@ -363,13 +364,401 @@ public sealed partial class MainPage : Page
         }
     }
 
+    private async void StartPortAccess_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryReadPortAccessConfig(out var config))
+        {
+            return;
+        }
+
+        await StartPortAccessAsync(config);
+    }
+
+    private void StopPortAccess_Click(object sender, RoutedEventArgs e)
+    {
+        StopPortAccessCore(logStop: true);
+    }
+
+    private bool TryReadPortAccessConfig(out PortAccessConfig config)
+    {
+        config = default!;
+
+        if (!int.TryParse(ExposePortTextBox.Text?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var ingressPort) ||
+            ingressPort is < 1 or > 65535)
+        {
+            AppendLog("Ingress port must be a value between 1 and 65535.");
+            return false;
+        }
+
+        if (string.Equals(ingressPort.ToString(CultureInfo.InvariantCulture), DemoPort, StringComparison.Ordinal))
+        {
+            AppendLog("Ingress port cannot be 50001 (reserved by demo control channel).");
+            return false;
+        }
+
+        var targetHost = (TargetHostTextBox.Text ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(targetHost))
+        {
+            targetHost = "127.0.0.1";
+            TargetHostTextBox.Text = targetHost;
+        }
+
+        if (!IsSupportedTargetHost(targetHost))
+        {
+            AppendLog("For safety, target host must be localhost, 127.0.0.1, or ::1.");
+            return false;
+        }
+
+        if (!int.TryParse(TargetPortTextBox.Text?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var targetPort) ||
+            targetPort is < 1 or > 65535)
+        {
+            AppendLog("Target port must be a value between 1 and 65535.");
+            return false;
+        }
+
+        if (!TryParseAllowedPorts(AllowedPortsTextBox.Text, out var allowedPorts, out var errorMessage))
+        {
+            AppendLog(errorMessage);
+            return false;
+        }
+
+        if (!allowedPorts.Contains(targetPort))
+        {
+            AppendLog($"Target port {targetPort} is not in allowed list: {string.Join(", ", allowedPorts.OrderBy(p => p))}");
+            return false;
+        }
+
+        config = new PortAccessConfig(ingressPort, targetHost, targetPort, allowedPorts);
+        return true;
+    }
+
+    private static bool IsSupportedTargetHost(string host)
+    {
+        return host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+               host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+               host.Equals("::1", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseAllowedPorts(string? allowedPortsText, out HashSet<int> allowedPorts, out string errorMessage)
+    {
+        allowedPorts = new HashSet<int>();
+        errorMessage = string.Empty;
+
+        var tokens = (allowedPortsText ?? string.Empty)
+            .Split(new[] { ',', ';', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+        if (tokens.Length == 0)
+        {
+            errorMessage = "Allowed target ports list cannot be empty.";
+            return false;
+        }
+
+        foreach (var token in tokens)
+        {
+            if (!int.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out var port) ||
+                port is < 1 or > 65535)
+            {
+                errorMessage = $"Invalid allowed port value: {token}";
+                return false;
+            }
+
+            allowedPorts.Add(port);
+        }
+
+        return true;
+    }
+
+    private async Task StartPortAccessAsync(PortAccessConfig config)
+    {
+        StopPortAccessCore();
+
+        try
+        {
+            _portAccessConfig = config;
+            _portAccessListener = new StreamSocketListener();
+            _portAccessListener.ConnectionReceived += PortAccessListener_ConnectionReceived;
+            await _portAccessListener.BindServiceNameAsync(config.IngressPort.ToString(CultureInfo.InvariantCulture));
+
+            UpdatePortAccessStatus($"Status: Running {config.IngressPort} -> {config.TargetHost}:{config.TargetPort}");
+            AppendLog($"Port access started: {config.IngressPort} -> {config.TargetHost}:{config.TargetPort}");
+            AppendLog($"Allowed target ports: {string.Join(", ", config.AllowedTargetPorts.OrderBy(p => p))}");
+        }
+        catch (Exception ex)
+        {
+            StopPortAccessCore();
+            UpdatePortAccessStatus("Status: Failed to start");
+            AppendLog("StartPortAccess failed: " + ex.Message);
+        }
+    }
+
+    private void StopPortAccessCore(bool logStop = false)
+    {
+        try
+        {
+            if (_portAccessListener is not null)
+            {
+                _portAccessListener.ConnectionReceived -= PortAccessListener_ConnectionReceived;
+                _portAccessListener.Dispose();
+                _portAccessListener = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog("StopPortAccess failed: " + ex.Message);
+        }
+        finally
+        {
+            _portAccessConfig = null;
+            UpdatePortAccessStatus("Status: Stopped");
+        }
+
+        if (logStop)
+        {
+            AppendLog("Port access stopped.");
+        }
+    }
+
+    private async void PortAccessListener_ConnectionReceived(StreamSocketListener sender, StreamSocketListenerConnectionReceivedEventArgs args)
+    {
+        var config = _portAccessConfig;
+        if (config is null)
+        {
+            args.Socket.Dispose();
+            return;
+        }
+
+        if (!config.AllowedTargetPorts.Contains(config.TargetPort))
+        {
+            args.Socket.Dispose();
+            await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                AppendLog($"Port access blocked: target port {config.TargetPort} is not in current allowed list.");
+            });
+            return;
+        }
+
+        var remoteAddress = args.Socket.Information.RemoteAddress?.DisplayName ?? "unknown";
+        var remotePort = args.Socket.Information.RemotePort ?? "?";
+        var remoteEndpoint = remoteAddress + ":" + remotePort;
+
+        var targetSocket = new StreamSocket();
+
+        try
+        {
+            await targetSocket.ConnectAsync(
+                new HostName(config.TargetHost),
+                config.TargetPort.ToString(CultureInfo.InvariantCulture));
+
+            await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                AppendLog($"Port access: {remoteEndpoint} -> {config.TargetHost}:{config.TargetPort}");
+            });
+
+            _ = Task.Run(() => RelayConnectionAsync(args.Socket, targetSocket, remoteEndpoint));
+        }
+        catch (Exception ex)
+        {
+            targetSocket.Dispose();
+            args.Socket.Dispose();
+
+            await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                AppendLog($"Port access rejected for {remoteEndpoint}: {ex.Message}");
+            });
+        }
+    }
+
+    private async Task RelayConnectionAsync(StreamSocket inbound, StreamSocket outbound, string remoteEndpoint)
+    {
+        try
+        {
+            var inboundToTarget = PumpAsync(inbound.InputStream, outbound.OutputStream);
+            var targetToInbound = PumpAsync(outbound.InputStream, inbound.OutputStream);
+            var firstCompleted = await Task.WhenAny(inboundToTarget, targetToInbound);
+
+            try
+            {
+                await firstCompleted;
+            }
+            catch
+            {
+                // Connection shutdown paths are expected when either side closes.
+            }
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                AppendLog($"Port access relay error for {remoteEndpoint}: {ex.Message}");
+            });
+        }
+        finally
+        {
+            inbound.Dispose();
+            outbound.Dispose();
+
+            await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                AppendLog($"Port access closed for {remoteEndpoint}");
+            });
+        }
+    }
+
+    private static async Task PumpAsync(IInputStream input, IOutputStream output)
+    {
+        using var reader = new DataReader(input)
+        {
+            InputStreamOptions = InputStreamOptions.Partial
+        };
+        using var writer = new DataWriter(output);
+
+        while (true)
+        {
+            var loaded = await reader.LoadAsync(8192);
+            if (loaded == 0)
+            {
+                break;
+            }
+
+            var data = new byte[(int)loaded];
+            reader.ReadBytes(data);
+
+            writer.WriteBytes(data);
+            await writer.StoreAsync();
+        }
+
+        await writer.FlushAsync();
+    }
+
+    private void ReplaceConnectedDevice(WiFiDirectDevice? newDevice)
+    {
+        if (_connectedDevice is not null)
+        {
+            _connectedDevice.ConnectionStatusChanged -= ConnectedDevice_ConnectionStatusChanged;
+            _connectedDevice.Dispose();
+        }
+
+        _connectedDevice = newDevice;
+
+        if (_connectedDevice is not null)
+        {
+            _connectedDevice.ConnectionStatusChanged += ConnectedDevice_ConnectionStatusChanged;
+        }
+    }
+
+    private void ReplaceClientSocket(StreamSocket socket)
+    {
+        _writer?.Dispose();
+        _reader?.Dispose();
+        _clientSocket?.Dispose();
+
+        _clientSocket = socket;
+        _writer = new DataWriter(_clientSocket.OutputStream);
+        _reader = new DataReader(_clientSocket.InputStream)
+        {
+            InputStreamOptions = InputStreamOptions.Partial
+        };
+    }
+
+    private void CleanupConnection()
+    {
+        try
+        {
+            if (_deviceWatcher is not null)
+            {
+                UnsubscribeDeviceWatcher(_deviceWatcher);
+                if (_deviceWatcher.Status == DeviceWatcherStatus.Started ||
+                    _deviceWatcher.Status == DeviceWatcherStatus.EnumerationCompleted)
+                {
+                    _deviceWatcher.Stop();
+                }
+
+                _deviceWatcher = null;
+            }
+        }
+        catch
+        {
+            // Swallow watcher shutdown exceptions during unload.
+        }
+
+        if (_listener is not null)
+        {
+            _listener.ConnectionRequested -= Listener_ConnectionRequested;
+            _listener = null;
+        }
+
+        if (_publisher is not null)
+        {
+            _publisher.StatusChanged -= Publisher_StatusChanged;
+            try
+            {
+                _publisher.Stop();
+            }
+            catch
+            {
+                // Ignore shutdown exceptions.
+            }
+
+            _publisher = null;
+        }
+
+        _serverListener?.Dispose();
+        _serverListener = null;
+
+        _writer?.Dispose();
+        _writer = null;
+        _reader?.Dispose();
+        _reader = null;
+        _clientSocket?.Dispose();
+        _clientSocket = null;
+
+        ReplaceConnectedDevice(null);
+    }
+
+    private void UnsubscribeDeviceWatcher(DeviceWatcher watcher)
+    {
+        watcher.Added -= DeviceWatcher_Added;
+        watcher.Updated -= DeviceWatcher_Updated;
+        watcher.Removed -= DeviceWatcher_Removed;
+        watcher.EnumerationCompleted -= DeviceWatcher_EnumerationCompleted;
+    }
+
+    private void UpdatePortAccessStatus(string status)
+    {
+        PortAccessStatusText.Text = status;
+    }
+
     private void AppendLog(string message)
     {
         Logs.Add($"[{DateTimeOffset.Now:HH:mm:ss}] {message}");
-        if (Logs.Count > 200)
+        if (Logs.Count > MaxLogItems)
         {
             Logs.RemoveAt(0);
         }
+
+        if (LogListView.Items.Count > 0)
+        {
+            LogListView.ScrollIntoView(LogListView.Items[LogListView.Items.Count - 1]);
+        }
+    }
+
+    private sealed class PortAccessConfig
+    {
+        public PortAccessConfig(int ingressPort, string targetHost, int targetPort, IReadOnlyCollection<int> allowedTargetPorts)
+        {
+            IngressPort = ingressPort;
+            TargetHost = targetHost;
+            TargetPort = targetPort;
+            AllowedTargetPorts = allowedTargetPorts;
+        }
+
+        public int IngressPort { get; }
+
+        public string TargetHost { get; }
+
+        public int TargetPort { get; }
+
+        public IReadOnlyCollection<int> AllowedTargetPorts { get; }
     }
 }
 

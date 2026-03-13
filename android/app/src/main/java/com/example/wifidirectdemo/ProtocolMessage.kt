@@ -1,7 +1,11 @@
 package com.example.wifidirectdemo
 
-import org.json.JSONObject
 import java.time.Instant
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 data class ProtocolMessage(
     val type: String,
@@ -10,15 +14,19 @@ data class ProtocolMessage(
     val timestampUtc: String = Instant.now().toString()
 ) {
     fun toJsonLine(): String {
-        val json = JSONObject()
-            .put("type", type)
-            .put("sender", sender)
-            .put("text", text)
-            .put("timestampUtc", timestampUtc)
-        return json.toString()
+        return buildJsonObject {
+            put("type", type)
+            put("sender", sender)
+            put("text", text)
+            put("timestampUtc", timestampUtc)
+        }.toString()
     }
 
     companion object {
+        private val json = Json {
+            ignoreUnknownKeys = true
+        }
+
         fun hello(sender: String, text: String = "ready"): ProtocolMessage =
             ProtocolMessage("hello", sender, text)
 
@@ -29,12 +37,12 @@ data class ProtocolMessage(
             ProtocolMessage("ping", sender, text)
 
         fun fromJson(json: String): ProtocolMessage {
-            val obj = JSONObject(json)
+            val obj = this.json.parseToJsonElement(json).jsonObject
             return ProtocolMessage(
-                type = obj.optString("type"),
-                sender = obj.optString("sender"),
-                text = obj.optString("text"),
-                timestampUtc = obj.optString("timestampUtc")
+                type = obj["type"]?.jsonPrimitive?.content.orEmpty(),
+                sender = obj["sender"]?.jsonPrimitive?.content.orEmpty(),
+                text = obj["text"]?.jsonPrimitive?.content.orEmpty(),
+                timestampUtc = obj["timestampUtc"]?.jsonPrimitive?.content.orEmpty()
             )
         }
     }

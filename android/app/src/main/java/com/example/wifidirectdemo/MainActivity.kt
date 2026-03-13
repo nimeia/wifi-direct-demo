@@ -19,11 +19,18 @@ import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URL
 import java.util.concurrent.Executors
+import kotlin.system.measureTimeMillis
 
 class MainActivity : AppCompatActivity() {
+    companion object {
+        private const val PORT_TEST_TIMEOUT_MS = 5000
+    }
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var manager: WifiP2pManager
@@ -39,7 +46,7 @@ class MainActivity : AppCompatActivity() {
     private var writer: BufferedWriter? = null
     private var reader: BufferedReader? = null
 
-    private val ioExecutor = Executors.newSingleThreadExecutor()
+    private val ioExecutor = Executors.newCachedThreadPool()
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -81,6 +88,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        binding.httpTestButton.setOnClickListener {
+            runHttpPortTest()
+        }
+
+        binding.tcpTestButton.setOnClickListener {
+            runTcpPortTest()
+        }
+
         appendLog("Ready.")
     }
 
@@ -92,6 +107,13 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         unregisterReceiver(receiver)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        serverSocket?.closeQuietly()
+        socket?.closeQuietly()
+        ioExecutor.shutdownNow()
     }
 
     private fun ensurePermissions() {
@@ -156,7 +178,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun onConnectionInfoAvailable(info: WifiP2pInfo) {
-        appendLog("Group formed=${info.groupFormed}, isGroupOwner=${info.isGroupOwner}, owner=${info.groupOwnerAddress?.hostAddress}")
+        val ownerHost = info.groupOwnerAddress?.hostAddress.orEmpty()
+        appendLog("Group formed=${info.groupFormed}, isGroupOwner=${info.isGroupOwner}, owner=$ownerHost")
+
+        val currentTestHost = binding.portTestHostEditText.text?.toString()?.trim().orEmpty()
+        if (ownerHost.isNotBlank() && currentTestHost.isBlank()) {
+            binding.portTestHostEditText.setText(ownerHost)
+        }
+
         if (!info.groupFormed) {
             return
         }
@@ -183,6 +212,97 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { appendLog("startServer failed: ${ex.message}") }
             }
         }
+    }
+
+    private fun runHttpPortTest() {
+        val endpoint = readPortTestEndpoint() ?: return
+        ioExecutor.execute {
+            var connection: HttpURLConnection? = null
+            try {
+                val url = URL("http://${endpoint.host}:${endpoint.port}${endpoint.path}")
+                connection = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = PORT_TEST_TIMEOUT_MS
+                    readTimeout = PORT_TEST_TIMEOUT_MS
+                    instanceFollowRedirects = false
+                }
+
+                val conn = connection ?: return@execute
+                var statusCode = -1
+                val elapsed = measureTimeMillis {
+                    statusCode = conn.responseCode
+                }
+                val source = if (statusCode in 200..399) conn.inputStream else conn.errorStream
+                val bodySnippet = source?.bufferedReader(Charsets.UTF_8)?.use { reader ->
+                    reader.readText()
+                        .replace("\r", " ")
+                        .replace("\n", " ")
+                        .take(160)
+                }.orEmpty()
+
+                runOnUiThread {
+                    appendLog(
+                        "HTTP test ${endpoint.host}:${endpoint.port}${endpoint.path} -> " +
+                            "status=$statusCode, connect=${elapsed}ms, snippet=${if (bodySnippet.isBlank()) "<empty>" else bodySnippet}"
+                    )
+                }
+            } catch (ex: Exception) {
+                runOnUiThread {
+                    appendLog("HTTP test failed (${endpoint.host}:${endpoint.port}${endpoint.path}): ${ex.message}")
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }
+    }
+
+    private fun runTcpPortTest() {
+        val endpoint = readPortTestEndpoint() ?: return
+        ioExecutor.execute {
+            var socket: Socket? = null
+            try {
+                socket = Socket()
+                val elapsed = measureTimeMillis {
+                    socket.connect(InetSocketAddress(endpoint.host, endpoint.port), PORT_TEST_TIMEOUT_MS)
+                }
+
+                runOnUiThread {
+                    appendLog("TCP test ${endpoint.host}:${endpoint.port} connected in ${elapsed}ms")
+                }
+            } catch (ex: Exception) {
+                runOnUiThread {
+                    appendLog("TCP test failed (${endpoint.host}:${endpoint.port}): ${ex.message}")
+                }
+            } finally {
+                socket?.close()
+            }
+        }
+    }
+
+    private fun readPortTestEndpoint(): PortAccessEndpoint? {
+        val host = binding.portTestHostEditText.text?.toString()?.trim().orEmpty()
+        if (host.isBlank()) {
+            appendLog("Port test host is required.")
+            return null
+        }
+
+        val portText = binding.portTestPortEditText.text?.toString()?.trim().orEmpty()
+        val port = portText.toIntOrNull()
+        if (port == null || port !in 1..65535) {
+            appendLog("Port test port must be 1..65535.")
+            return null
+        }
+
+        var path = binding.portTestPathEditText.text?.toString()?.trim().orEmpty()
+        if (path.isBlank()) {
+            path = "/"
+            binding.portTestPathEditText.setText(path)
+        } else if (!path.startsWith("/")) {
+            path = "/$path"
+            binding.portTestPathEditText.setText(path)
+        }
+
+        return PortAccessEndpoint(host, port, path)
     }
 
     private fun startClient(host: String) {
@@ -242,5 +362,25 @@ class MainActivity : AppCompatActivity() {
     fun appendLog(message: String) {
         val previous = binding.logTextView.text?.toString().orEmpty()
         binding.logTextView.text = previous + if (previous.isEmpty()) message else "\n$message"
+    }
+
+    private data class PortAccessEndpoint(
+        val host: String,
+        val port: Int,
+        val path: String
+    )
+}
+
+private fun ServerSocket.closeQuietly() {
+    try {
+        close()
+    } catch (_: Exception) {
+    }
+}
+
+private fun Socket.closeQuietly() {
+    try {
+        close()
+    } catch (_: Exception) {
     }
 }

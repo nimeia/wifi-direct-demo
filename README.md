@@ -42,6 +42,27 @@
 
 TCP 文本通道使用一个固定端口：`50001`。
 
+## 端口开放演示（Windows）
+
+Windows Demo 页面新增了 **Port Access Configuration** 卡片，可用于把 Wi‑Fi Direct 侧的一个入口端口转发到本机服务端口：
+
+- Ingress Port：远端设备访问的端口（例如 `51080`）
+- Target Host：仅允许 `localhost / 127.0.0.1 / ::1`
+- Target Port：Windows 本机服务端口（例如 `8080`）
+- Allowed Target Ports：可配置白名单（逗号分隔），目标端口必须在白名单中
+
+示例：将 `51080 -> 127.0.0.1:8080`，远端通过 Wi‑Fi Direct 连到 Windows 后，访问 `Windows_IP:51080` 即可转发到本机 `8080` 服务。
+
+## Android 端口测试面板
+
+Android 页面新增了 **Port Access Test** 区域，用于直接验证 Windows 端口开放是否可达：
+
+- `Host`：Windows 的 Wi‑Fi Direct IP
+- `Port`：Windows 配置的 Ingress Port（例如 `51080`）
+- `Path`：HTTP 测试路径（例如 `/`）
+- `HTTP Test`：发起 HTTP GET 并显示状态码和响应摘要
+- `TCP Test`：只做 TCP connect 连通性探测
+
 ## 协议
 
 文本协议使用 **newline-delimited JSON**，例如：
