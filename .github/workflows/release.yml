@@ -24,6 +24,48 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Ensure UWP build components
+        shell: pwsh
+        timeout-minutes: 35
+        run: |
+          $installerRoot = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer"
+          $vswhere = Join-Path $installerRoot "vswhere.exe"
+          $setupExe = Join-Path $installerRoot "setup.exe"
+
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found at $vswhere"
+          }
+          if (-not (Test-Path $setupExe)) {
+            throw "setup.exe not found at $setupExe"
+          }
+
+          $installPath = & $vswhere -latest -products * -property installationPath
+          if (-not $installPath) {
+            throw "Unable to detect Visual Studio installation path."
+          }
+          Write-Host "Visual Studio installation: $installPath"
+
+          & $setupExe modify `
+            --installPath "$installPath" `
+            --add Microsoft.VisualStudio.Workload.Universal `
+            --add Microsoft.VisualStudio.ComponentGroup.UWP.NetCoreAndStandard `
+            --add Microsoft.VisualStudio.Component.Windows10SDK `
+            --includeRecommended `
+            --quiet `
+            --norestart `
+            --wait
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Visual Studio modify failed with exit code $LASTEXITCODE"
+          }
+
+          $uapRoot = Join-Path ${env:ProgramFiles(x86)} "Reference Assemblies\Microsoft\Framework\UAP"
+          if (-not (Test-Path $uapRoot)) {
+            throw "UAP reference assemblies path still not found after install: $uapRoot"
+          }
+
+          Get-ChildItem $uapRoot -Directory | Select-Object -ExpandProperty Name
+
       - name: Build installer package
         shell: pwsh
         run: |
