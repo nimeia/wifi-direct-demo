@@ -27,6 +27,36 @@ jobs:
       - name: Run protocol tests
         run: dotnet test windows/WiFiDirectDemo.Protocol.Tests/WiFiDirectDemo.Protocol.Tests.csproj --configuration Release --no-restore
 
+      - name: Detect installed UAP SDK
+        id: detect_uap_sdk
+        shell: pwsh
+        run: |
+          $uapRoot = Join-Path ${env:ProgramFiles(x86)} "Reference Assemblies\Microsoft\Framework\UAP"
+          if (-not (Test-Path $uapRoot)) {
+            throw "UAP reference assemblies path not found: $uapRoot"
+          }
+
+          $versions = Get-ChildItem $uapRoot -Directory |
+            Where-Object { $_.Name -match '^v10\.0\.\d+(\.\d+)?$' } |
+            Sort-Object { [version]($_.Name.TrimStart('v')) } -Descending
+
+          if (-not $versions -or $versions.Count -eq 0) {
+            throw "No UAP reference assemblies found under $uapRoot"
+          }
+
+          $selected = $versions[0].Name.TrimStart('v')
+          $parts = $selected.Split('.')
+          if ($parts.Count -lt 3) {
+            throw "Unexpected UAP SDK version format: $selected"
+          }
+
+          $build = $parts[2]
+          $tpv = if ($parts.Count -ge 4) { $selected } else { "$selected.0" }
+          $tfm = "uap10.0.$build"
+
+          "target_framework=$tfm" >> $env:GITHUB_OUTPUT
+          "target_platform_version=$tpv" >> $env:GITHUB_OUTPUT
+
       - name: Build Windows UWP demo
         shell: pwsh
         run: |
@@ -34,6 +64,9 @@ jobs:
             /restore `
             /p:Configuration=Release `
             /p:Platform=x64 `
+            /p:TargetFramework=${{ steps.detect_uap_sdk.outputs.target_framework }} `
+            /p:TargetPlatformVersion=${{ steps.detect_uap_sdk.outputs.target_platform_version }} `
+            /p:TargetPlatformMinVersion=${{ steps.detect_uap_sdk.outputs.target_platform_version }} `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=None
 
