@@ -153,7 +153,9 @@ try {
     $uapAvailable = $false
     $targetFramework = $null
     $targetPlatformVersion = $null
+    $detectedSdkVersion = $null
     $uapDetectionSource = $null
+    $overrideTargetsFromDetection = $false
 
     if (Test-Path $uapRoot) {
         $versions = @(Get-ChildItem $uapRoot -Directory |
@@ -169,6 +171,7 @@ try {
                 $targetPlatformVersion = if ($parts.Count -ge 4) { $selected } else { "$selected.0" }
                 $uapAvailable = $true
                 $uapDetectionSource = $uapRoot
+                $overrideTargetsFromDetection = $true
             }
         }
     }
@@ -180,19 +183,19 @@ try {
 
         if ($sdkVersions.Count -gt 0) {
             $selected = $sdkVersions[0].Name
-            $parts = $selected.Split('.')
-            if ($parts.Count -ge 3) {
-                $build = $parts[2]
-                $targetFramework = "uap10.0.$build"
-                $targetPlatformVersion = $selected
-                $uapAvailable = $true
-                $uapDetectionSource = $windowsSdkReferencesRoot
-            }
+            $uapAvailable = $true
+            $detectedSdkVersion = $selected
+            $uapDetectionSource = $windowsSdkReferencesRoot
         }
     }
 
     if ($uapAvailable) {
-        Write-Host "Detected UAP SDK: $targetFramework ($targetPlatformVersion) from $uapDetectionSource"
+        if ($overrideTargetsFromDetection) {
+            Write-Host "Detected UAP SDK: $targetFramework ($targetPlatformVersion) from $uapDetectionSource"
+        }
+        else {
+            Write-Host "Detected Windows SDK references at $uapDetectionSource (latest $detectedSdkVersion). Using project-defined UWP target values."
+        }
     }
     else {
         Write-Host "UAP SDK not available on this machine. Checked: $uapRoot and $windowsSdkReferencesRoot"
@@ -244,10 +247,13 @@ try {
             $msbuildArgs += "/p:UapAppxPackageBuildMode=None"
         }
 
-        if ($uapAvailable) {
+        if ($overrideTargetsFromDetection) {
             $msbuildArgs += "/p:TargetFramework=$targetFramework"
             $msbuildArgs += "/p:TargetPlatformVersion=$targetPlatformVersion"
             $msbuildArgs += "/p:TargetPlatformMinVersion=$targetPlatformVersion"
+        }
+        elseif ($uapAvailable) {
+            Write-Host "Using TargetFramework/TargetPlatformVersion from project file."
         }
         elseif ($ForceUwpBuild) {
             Write-Host "Proceeding without detected UAP SDK because -ForceUwpBuild was specified."
@@ -298,6 +304,9 @@ try {
     }
     if ($targetPlatformVersion) {
         $statusLines.Add(("target_platform_version={0}" -f $targetPlatformVersion))
+    }
+    if ($detectedSdkVersion) {
+        $statusLines.Add(("detected_windows_sdk_version={0}" -f $detectedSdkVersion))
     }
     if (-not $uwpBuilt -and $skipReason) {
         $statusLines.Add(("reason={0}" -f $skipReason))
