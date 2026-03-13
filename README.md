@@ -87,6 +87,9 @@ Android 页面新增了 **Port Access Test** 区域，用于直接验证 Windows
 - Visual Studio 2022 / MSBuild / UWP 构建支持
 - 需要实体设备，GitHub Actions **只能编译，不能真实发起 Wi‑Fi Direct 会话**
 
+> 说明：Windows 端是 UWP，不能把 `bin` 目录里的 exe 当普通桌面程序直接双击运行。  
+> 需要安装 `.appx` 包后再启动（release 产物里会包含 `install-appx.ps1`）。
+
 ### Android
 - Android 10+
 - 支持 Wi‑Fi P2P

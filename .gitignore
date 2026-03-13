@@ -25,3 +25,4 @@ captures/
 build/
 out/
 android/.kotlin/
+/dist/
