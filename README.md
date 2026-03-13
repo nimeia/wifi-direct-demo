@@ -15,6 +15,7 @@
 .
 ├─ .github/workflows/
 │  ├─ windows-demo.yml
+│  ├─ release.yml
 │  └─ android-demo.yml
 ├─ docs/
 │  ├─ architecture.md
@@ -99,13 +100,15 @@ Android 页面新增了 **Port Access Test** 区域，用于直接验证 Windows
 ## GitHub Actions
 
 - `windows-demo.yml`
-  - 构建 Windows 协议库测试
-  - 构建 UWP Demo
-  - 上传 Windows 构建产物
+  - 构建 Windows 安装包（sideload `.appx` + 安装脚本）
+  - 上传安装包 zip 与解压目录产物
 - `android-demo.yml`
   - 构建 Android Debug APK
   - 运行 JVM 单测
   - 上传 APK
+- `release.yml`
+  - 生成并发布 Windows 安装包 release 资产（`windows-demo-installer.zip`）
+  - 同时附带 SHA256 校验文件
 
 ## 手工验证建议
 

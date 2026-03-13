@@ -1,4 +1,4 @@
-name: release-demo
+name: release-windows-installer
 
 on:
   push:
@@ -9,48 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build_android:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 9.3.1
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install required Android packages
-        run: |
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-
-      - name: Run unit tests
-        run: gradle -p android :app:testDebugUnitTest
-
-      - name: Assemble debug APK
-        run: gradle -p android :app:assembleDebug
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-demo-apk
-          path: android/app/build/outputs/apk/debug/*.apk
-
-  build_windows:
-    runs-on: windows-latest
-
-    outputs:
-      uap_available: ${{ steps.detect_uap_sdk.outputs.available }}
+  build_windows_installer:
+    runs-on: windows-2022
 
     steps:
       - name: Checkout
@@ -64,163 +24,52 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Restore protocol test dependencies
-        run: dotnet restore windows/WiFiDirectDemo.Protocol.Tests/WiFiDirectDemo.Protocol.Tests.csproj
-
-      - name: Run protocol tests
-        run: dotnet test windows/WiFiDirectDemo.Protocol.Tests/WiFiDirectDemo.Protocol.Tests.csproj --configuration Release --no-restore
-
-      - name: Detect installed UAP SDK
-        id: detect_uap_sdk
+      - name: Build installer package
         shell: pwsh
         run: |
-          $uapRoot = Join-Path ${env:ProgramFiles(x86)} "Reference Assemblies\Microsoft\Framework\UAP"
-          if (-not (Test-Path $uapRoot)) {
-            Write-Host "::warning::UAP reference assemblies path not found: $uapRoot"
-            "available=false" >> $env:GITHUB_OUTPUT
-            exit 0
-          }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1 `
+            -Configuration Release `
+            -Platform x64 `
+            -OutputDir dist/windows-demo-build `
+            -ZipPath dist/windows-demo-installer.zip
 
-          $versions = Get-ChildItem $uapRoot -Directory |
-            Where-Object { $_.Name -match '^v10\.0\.\d+(\.\d+)?$' } |
-            Sort-Object { [version]($_.Name.TrimStart('v')) } -Descending
-
-          if (-not $versions -or $versions.Count -eq 0) {
-            Write-Host "::warning::No UAP reference assemblies found under $uapRoot"
-            "available=false" >> $env:GITHUB_OUTPUT
-            exit 0
-          }
-
-          $selected = $versions[0].Name.TrimStart('v')
-          $parts = $selected.Split('.')
-          if ($parts.Count -lt 3) {
-            Write-Host "::warning::Unexpected UAP SDK version format: $selected"
-            "available=false" >> $env:GITHUB_OUTPUT
-            exit 0
-          }
-
-          $build = $parts[2]
-          $tpv = if ($parts.Count -ge 4) { $selected } else { "$selected.0" }
-          $tfm = "uap10.0.$build"
-
-          "available=true" >> $env:GITHUB_OUTPUT
-          "target_framework=$tfm" >> $env:GITHUB_OUTPUT
-          "target_platform_version=$tpv" >> $env:GITHUB_OUTPUT
-
-      - name: Build Windows UWP demo
-        if: steps.detect_uap_sdk.outputs.available == 'true'
+      - name: Verify installer package
         shell: pwsh
         run: |
-          msbuild windows/WiFiDirectDemo.Windows/WiFiDirectDemo.Windows.csproj `
-            /restore `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /p:TargetFramework=${{ steps.detect_uap_sdk.outputs.target_framework }} `
-            /p:TargetPlatformVersion=${{ steps.detect_uap_sdk.outputs.target_platform_version }} `
-            /p:TargetPlatformMinVersion=${{ steps.detect_uap_sdk.outputs.target_platform_version }} `
-            /p:AppxBundle=Never `
-            /p:GenerateAppxPackageOnBuild=true `
-            /p:UapAppxPackageBuildMode=SideloadOnly `
-            /p:AppxPackageSigningEnabled=false `
-            /p:AppxPackageDir=artifacts\appx\
-
-      - name: Skip Windows UWP demo build
-        if: steps.detect_uap_sdk.outputs.available != 'true'
-        run: echo "Skipping UWP build because required UAP reference assemblies are not present on this runner image."
-
-      - name: Prepare Windows artifact payload
-        shell: pwsh
-        run: |
-          $outDir = "dist/windows-demo-build"
-          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-
-          if ("${{ steps.detect_uap_sdk.outputs.available }}" -eq "true") {
-            if (Test-Path "artifacts/appx") {
-              New-Item -ItemType Directory -Force -Path "$outDir/appx" | Out-Null
-              Copy-Item "artifacts/appx/*" -Destination "$outDir/appx" -Recurse -Force
-            }
-
-            if (Test-Path "windows/WiFiDirectDemo.Windows/bin/x64/Release") {
-              New-Item -ItemType Directory -Force -Path "$outDir/bin" | Out-Null
-              Copy-Item "windows/WiFiDirectDemo.Windows/bin/x64/Release/*" -Destination "$outDir/bin" -Recurse -Force
-            }
-
-            if (Test-Path "scripts/install-windows-appx.ps1") {
-              Copy-Item "scripts/install-windows-appx.ps1" -Destination "$outDir/install-appx.ps1" -Force
-            }
-
-            "status=uwp-built" | Out-File "$outDir/build-status.txt" -Encoding utf8
-            "package_type=appx-sideload" | Out-File "$outDir/build-status.txt" -Encoding utf8 -Append
-          } else {
-            "status=uwp-skipped" | Out-File "$outDir/build-status.txt" -Encoding utf8
-            "reason=required UAP reference assemblies were not present on this runner image" | Out-File "$outDir/build-status.txt" -Encoding utf8 -Append
-
-            if (Test-Path "windows/WiFiDirectDemo.Protocol/bin/Release") {
-              New-Item -ItemType Directory -Force -Path "$outDir/protocol" | Out-Null
-              Copy-Item "windows/WiFiDirectDemo.Protocol/bin/Release/*" -Destination "$outDir/protocol" -Recurse -Force
-            }
-
-            if (Test-Path "windows/WiFiDirectDemo.Protocol.Tests/bin/Release") {
-              New-Item -ItemType Directory -Force -Path "$outDir/protocol-tests" | Out-Null
-              Copy-Item "windows/WiFiDirectDemo.Protocol.Tests/bin/Release/*" -Destination "$outDir/protocol-tests" -Recurse -Force
-            }
+          if (-not (Test-Path "dist/windows-demo-installer.zip")) {
+            throw "Installer zip not found: dist/windows-demo-installer.zip"
           }
 
-      - name: Upload Windows build artifact
+          $appx = Get-ChildItem "dist/windows-demo-build/appx" -Recurse -File -Filter *.appx -ErrorAction SilentlyContinue
+          if (-not $appx -or $appx.Count -eq 0) {
+            throw "No .appx package found under dist/windows-demo-build/appx"
+          }
+
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-demo-build
-          path: dist/windows-demo-build/**
+          name: windows-demo-installer
+          path: dist/windows-demo-installer.zip
 
   release:
     runs-on: ubuntu-latest
-    needs: [build_android, build_windows]
+    needs: [build_windows_installer]
 
     steps:
-      - name: Download Android artifact
+      - name: Download installer artifact
         uses: actions/download-artifact@v4
         with:
-          name: android-demo-apk
-          path: dist/android
-
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-demo-build
-          path: dist/windows
-
-      - name: Archive Windows build
-        run: |
-          cd dist
-          zip -r windows-demo-build.zip windows
+          name: windows-demo-installer
+          path: dist
 
       - name: Generate release tag
         id: release_tag
         run: echo "tag=v$(date -u +'%Y%m%d-%H%M%S')-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
 
-      - name: Build file list
-        id: release_files
-        shell: bash
+      - name: Create checksum
         run: |
-          set -euo pipefail
-          files=()
-
-          while IFS= read -r -d '' file; do
-            files+=("$file")
-          done < <(find dist/android -type f -name '*.apk' -print0)
-
-          files+=("dist/windows-demo-build.zip")
-
-          if [[ ${#files[@]} -eq 0 ]]; then
-            echo "No compiled artifacts found." >&2
-            exit 1
-          fi
-
-          {
-            echo "files<<EOF"
-            printf '%s\n' "${files[@]}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          cd dist
+          sha256sum windows-demo-installer.zip > windows-demo-installer.zip.sha256
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -229,4 +78,6 @@ jobs:
           tag_name: ${{ steps.release_tag.outputs.tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
-          files: ${{ steps.release_files.outputs.files }}
+          files: |
+            dist/windows-demo-installer.zip
+            dist/windows-demo-installer.zip.sha256
