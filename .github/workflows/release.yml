@@ -53,7 +53,7 @@ jobs:
             --includeRecommended `
             --quiet `
             --norestart `
-            --wait
+            --force
 
           if ($LASTEXITCODE -ne 0) {
             throw "Visual Studio modify failed with exit code $LASTEXITCODE"
