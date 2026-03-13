@@ -153,6 +153,7 @@ try {
     $uapAvailable = $false
     $targetFramework = $null
     $targetPlatformVersion = $null
+    $targetFrameworkRootPath = $null
     $detectedSdkVersion = $null
     $uapDetectionSource = $null
     $overrideTargetsFromDetection = $false
@@ -171,6 +172,52 @@ try {
                 $targetPlatformVersion = if ($parts.Count -ge 4) { $selected } else { "$selected.0" }
                 $uapAvailable = $true
                 $uapDetectionSource = $uapRoot
+                $overrideTargetsFromDetection = $true
+            }
+        }
+    }
+
+    if (-not $uapAvailable -and (Test-Path $windowsSdkReferencesRoot)) {
+        $sdkVersions = @(Get-ChildItem $windowsSdkReferencesRoot -Directory |
+            Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]$_.Name } -Descending)
+
+        $selectedShimSdk = $sdkVersions |
+            Where-Object { [version]$_.Name -ge [version]"10.0.19041.0" } |
+            Select-Object -First 1
+
+        if ($selectedShimSdk) {
+            $sdkBuild = ([version]$selectedShimSdk.Name).Build
+            $shimRootBase = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
+            $shimFrameworkRoot = Join-Path $shimRootBase "uap-ref-shim"
+            $shimUapRoot = Join-Path $shimFrameworkRoot "UAP"
+            $shimPath = Join-Path $shimUapRoot ("v10.0.$sdkBuild")
+
+            if (-not (Test-Path $shimPath)) {
+                New-Item -ItemType Directory -Path $shimUapRoot -Force | Out-Null
+                New-Item -ItemType Junction -Path $shimPath -Target $selectedShimSdk.FullName | Out-Null
+                Write-Host "Created UAP shim: $shimPath -> $($selectedShimSdk.FullName)"
+            }
+
+            $targetFrameworkRootPath = "$shimFrameworkRoot\"
+        }
+    }
+
+    $uapDetectionRoot = if ($targetFrameworkRootPath) { Join-Path $targetFrameworkRootPath "UAP" } else { $uapRoot }
+    if (-not $uapAvailable -and (Test-Path $uapDetectionRoot)) {
+        $versions = @(Get-ChildItem $uapDetectionRoot -Directory |
+            Where-Object { $_.Name -match '^v10\.0\.\d+(\.\d+)?$' } |
+            Sort-Object { [version]($_.Name.TrimStart('v')) } -Descending)
+
+        if ($versions.Count -gt 0) {
+            $selected = $versions[0].Name.TrimStart('v')
+            $parts = $selected.Split('.')
+            if ($parts.Count -ge 3) {
+                $build = $parts[2]
+                $targetFramework = "uap10.0.$build"
+                $targetPlatformVersion = if ($parts.Count -ge 4) { $selected } else { "$selected.0" }
+                $uapAvailable = $true
+                $uapDetectionSource = $uapDetectionRoot
                 $overrideTargetsFromDetection = $true
             }
         }
@@ -254,6 +301,11 @@ try {
         }
         elseif ($ForceUwpBuild) {
             Write-Host "Proceeding without detected UAP SDK because -ForceUwpBuild was specified."
+        }
+
+        if ($targetFrameworkRootPath) {
+            $msbuildArgs += "/p:TargetFrameworkRootPath=$targetFrameworkRootPath"
+            Write-Host "Using TargetFrameworkRootPath override: $targetFrameworkRootPath"
         }
 
         & msbuild @msbuildArgs

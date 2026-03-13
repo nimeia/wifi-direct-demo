@@ -46,6 +46,7 @@ jobs:
             --installPath "$installPath" `
             --add Microsoft.VisualStudio.Workload.Universal `
             --add Microsoft.VisualStudio.ComponentGroup.UWP.NetCoreAndStandard `
+            --add Microsoft.VisualStudio.ComponentGroup.UWP.Support `
             --add Microsoft.VisualStudio.Component.Windows10SDK.19041 `
             --includeRecommended `
             --quiet `
@@ -57,7 +58,10 @@ jobs:
           }
 
           $uapRoot = Join-Path ${env:ProgramFiles(x86)} "Reference Assemblies\Microsoft\Framework\UAP"
-          $detected = $false
+          $sdkRefsRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\References"
+          $minimumUapBuild = 19041
+          $detectedUap = $false
+          $detectedSdk = $false
 
           for ($attempt = 1; $attempt -le 18; $attempt++) {
             if (Test-Path $uapRoot) {
@@ -67,7 +71,27 @@ jobs:
               if ($uapVersions.Count -gt 0) {
                 Write-Host "Detected UAP reference assemblies:"
                 $uapVersions
-                $detected = $true
+                $compatible = $uapVersions | Where-Object {
+                  $parts = $_.TrimStart('v').Split('.')
+                  $parts.Count -ge 3 -and [int]$parts[2] -ge $minimumUapBuild
+                }
+                if ($compatible.Count -gt 0) {
+                  $detectedUap = $true
+                  break
+                }
+                Write-Host "No compatible UAP found (need build >= $minimumUapBuild); waiting..."
+              }
+            }
+
+            if (Test-Path $sdkRefsRoot) {
+              $sdkVersions = @(Get-ChildItem $sdkRefsRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+                Sort-Object { [version]$_.Name } -Descending)
+              $compatibleSdk = $sdkVersions | Where-Object { [version]$_.Name -ge [version]"10.0.19041.0" }
+              if ($compatibleSdk.Count -gt 0) {
+                Write-Host "Detected compatible Windows SDK references (fallback for shim):"
+                $compatibleSdk | Select-Object -ExpandProperty Name
+                $detectedSdk = $true
                 break
               }
             }
@@ -77,8 +101,8 @@ jobs:
             }
           }
 
-          if (-not $detected) {
-            throw "UAP reference assemblies not found after install. Checked: $uapRoot"
+          if (-not $detectedUap -and -not $detectedSdk) {
+            throw "Compatible UAP reference assemblies (build >= $minimumUapBuild) not found after install. Checked: $uapRoot and $sdkRefsRoot"
           }
 
       - name: Build Windows installer package
